@@ -184,6 +184,23 @@ export class Device {
     return packet;
   }
 
+  _checkError(data: Buffer) {
+    if (data.length < 48) {
+      throw new Error("invalid length");
+    }
+
+    const cs = data.readUInt16LE(0x20);
+    data.writeUInt16LE(0, 0x20);
+    if (checksum(data) !== cs) {
+      throw new Error("checksum error");
+    }
+
+    const ecode = data.readUInt16LE(0x22);
+    if (ecode) {
+      throw new Error(`error: code= ${ecode}`);
+    }
+  }
+
   sendPacket(packet: Buffer): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const socket = dgram.createSocket({ type: "udp4", reuseAddr: true });
@@ -207,37 +224,28 @@ export class Device {
   auth(): Promise<void> {
     if (this._authed) return Promise.resolve();
     return new Promise(async (resolve, reject) => {
+      // prepare packet
       const payload = Buffer.alloc(80, 0);
-      payload[0x1e] = 0x1;
-      payload[0x2d] = 0x1;
-
+      payload.writeUInt8(1, 0x1e);
+      payload.writeUInt8(1, 0x2d);
       const mac = this.macAddress;
       Buffer.from(`===${mac.split(":").join("")}`, "utf8").copy(payload, 4, 0);
       Buffer.from(mac).copy(payload, 0x30, 0);
       const packet = this.getPacket(0x65, payload);
+
+
+      // get auth keys
       const data = await this.sendPacket(packet);
-      if (data.length < 48) {
-        return reject(new Error("invalid length"));
-      }
-
-      const cs = data[0x20] | (data[0x21] << 8);
-      const dataCS = checksum(data);
-      if (((dataCS - data[0x20] - data[0x21]) & 0xffff) !== cs) {
-        return reject(new Error("checksum error"));
-      }
-
-      const ecode = data[0x22] | (data[0x23] << 8);
-      if (ecode) {
-        return reject(new Error(`error: code= ${ecode}`));
-      }
-
-      const decipher = crypto.createDecipheriv("aes-128-cbc", this._key, this._iv);
-      decipher.setAutoPadding(false);
-      const deciphered = Buffer.concat([decipher.update(data.slice(0x38)), decipher.final()]);
-      this._id = deciphered.slice(0, 4);
-      this._key = deciphered.slice(4, 0x14);
-      this._authed = true;
-      resolve();
+      try {
+        this._checkError(data);
+        const decipher = crypto.createDecipheriv("aes-128-cbc", this._key, this._iv);
+        decipher.setAutoPadding(false);
+        const deciphered = Buffer.concat([decipher.update(data.slice(0x38)), decipher.final()]);
+        this._id = deciphered.slice(0, 4);
+        this._key = deciphered.slice(4, 0x14);
+        this._authed = true;
+        resolve();
+      } catch (e) { reject(e); }
     });
   }
 
@@ -248,7 +256,6 @@ export class Device {
       payload[0] = 3;
       const packet = this.getPacket(0x6a, payload);
       const data = await this.sendPacket(packet);
-      console.log(data);
       resolve();
     });
   }
