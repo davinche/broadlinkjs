@@ -143,65 +143,57 @@ export class Device {
     ]);
   }
 
-  getPacket(command: number, payload: Buffer): Buffer {
+  private _auth(): Promise<void> {
+    if (this._authed) return Promise.resolve();
+    return new Promise(async (resolve, reject) => {
+      // prepare packet
+      const payload = Buffer.alloc(80, 0);
+      payload.writeUInt8(1, 0x1e);
+      payload.writeUInt8(1, 0x2d);
+      const mac = this.macAddress;
+      Buffer.from(`===${mac.split(":").join("")}`, "utf8").copy(payload, 4, 0);
+      Buffer.from(mac).copy(payload, 0x30, 0);
+      const packet = this._getPacket(0x65, payload);
+
+      // get auth keys
+      const data = await this._sendPacket(packet);
+      try {
+        this._checkError(data);
+        const decipher = crypto.createDecipheriv("aes-128-cbc", this._key, this._iv);
+        decipher.setAutoPadding(false);
+        const deciphered = Buffer.concat([decipher.update(data.slice(0x38)), decipher.final()]);
+        this._id = deciphered.slice(0, 4);
+        this._key = deciphered.slice(4, 0x14);
+        this._authed = true;
+        resolve();
+      } catch (e) { reject(e); }
+    });
+  }
+
+  private _getPacket(command: number, payload: Buffer): Buffer {
     const header = Buffer.alloc(56, 0);
+    const staticHeader = Buffer.from([ 0x5a, 0xa5, 0xaa, 0x55, 0x5a, 0xa5, 0xaa, 0x55, ]);
     this._count = (this._count + 1) & 0xffff;
-    header[0x00] = 0x5a;
-    header[0x01] = 0xa5;
-    header[0x02] = 0xaa;
-    header[0x03] = 0x55;
-    header[0x04] = 0x5a;
-    header[0x05] = 0xa5;
-    header[0x06] = 0xaa;
-    header[0x07] = 0x55;
-    header[0x24] = this._deviceType & 0xff;
-    header[0x25] = this._deviceType >> 8;
-    header[0x26] = command;
-    header[0x28] = this._count & 0xff;
-    header[0x29] = this._count >> 8;
-    header[0x2a] = this._mac[0];
-    header[0x2b] = this._mac[1];
-    header[0x2c] = this._mac[2];
-    header[0x2d] = this._mac[3];
-    header[0x2e] = this._mac[4];
-    header[0x2f] = this._mac[5];
-    header[0x30] = this._id[0];
-    header[0x31] = this._id[1];
-    header[0x32] = this._id[2];
-    header[0x33] = this._id[3];
+    staticHeader.copy(header, 0, 0);
+    header.writeUInt16LE(this._deviceType, 0x24);
+    header.writeUInt16LE(command, 0x26);
+    header.writeUInt16LE(this._count, 0x28);
+    this._mac.copy(header, 0x2a, 0);
+    this._id.copy(header, 0x30, 0);
+    header.writeUInt16LE(checksum(payload), 0x34);
 
-    let cs = checksum(payload);
-    header[0x34] = cs & 0xff;
-    header[0x35] = cs >> 8;
-
+    // encode
     const cipher = crypto.createCipheriv("aes-128-cbc", this._key, this._iv);
     cipher.setAutoPadding(false);
     const encryptedPayload = Buffer.concat([cipher.update(payload), cipher.final()]);
     const packet = Buffer.concat([header, encryptedPayload]);
-    cs = checksum(packet);
-    packet[0x20] = cs & 0xff;
-    packet[0x21] = cs >> 8;
+
+    // checksum
+    packet.writeUInt16LE(checksum(packet), 0x20);
     return packet;
   }
 
-  _checkError(data: Buffer) {
-    if (data.length < 48) {
-      throw new Error("invalid length");
-    }
-
-    const cs = data.readUInt16LE(0x20);
-    data.writeUInt16LE(0, 0x20);
-    if (checksum(data) !== cs) {
-      throw new Error("checksum error");
-    }
-
-    const ecode = data.readUInt16LE(0x22);
-    if (ecode) {
-      throw new Error(`error: code= ${ecode}`);
-    }
-  }
-
-  sendPacket(packet: Buffer): Promise<Buffer> {
+  private _sendPacket(packet: Buffer): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const socket = dgram.createSocket({ type: "udp4", reuseAddr: true });
       socket.on("message", (data: Buffer) => {
@@ -221,41 +213,31 @@ export class Device {
     });
   }
 
-  auth(): Promise<void> {
-    if (this._authed) return Promise.resolve();
-    return new Promise(async (resolve, reject) => {
-      // prepare packet
-      const payload = Buffer.alloc(80, 0);
-      payload.writeUInt8(1, 0x1e);
-      payload.writeUInt8(1, 0x2d);
-      const mac = this.macAddress;
-      Buffer.from(`===${mac.split(":").join("")}`, "utf8").copy(payload, 4, 0);
-      Buffer.from(mac).copy(payload, 0x30, 0);
-      const packet = this.getPacket(0x65, payload);
+  _checkError(data: Buffer) {
+    if (data.length < 48) {
+      throw new Error("invalid length");
+    }
 
+    const cs = data.readUInt16LE(0x20);
+    data.writeUInt16LE(0, 0x20);
+    if (checksum(data) !== cs) {
+      throw new Error("checksum error");
+    }
 
-      // get auth keys
-      const data = await this.sendPacket(packet);
-      try {
-        this._checkError(data);
-        const decipher = crypto.createDecipheriv("aes-128-cbc", this._key, this._iv);
-        decipher.setAutoPadding(false);
-        const deciphered = Buffer.concat([decipher.update(data.slice(0x38)), decipher.final()]);
-        this._id = deciphered.slice(0, 4);
-        this._key = deciphered.slice(4, 0x14);
-        this._authed = true;
-        resolve();
-      } catch (e) { reject(e); }
-    });
+    const ecode = data.readUInt16LE(0x22);
+    if (ecode) {
+      throw new Error(`error: code= ${ecode}`);
+    }
   }
+
 
   enterLearning(): Promise<Buffer> {
     return new Promise(async (resolve) => {
-      await this.auth();
+      await this._auth();
       const payload = Buffer.alloc(16, 0);
       payload[0] = 3;
-      const packet = this.getPacket(0x6a, payload);
-      const data = await this.sendPacket(packet);
+      const packet = this._getPacket(0x6a, payload);
+      await this._sendPacket(packet);
       resolve();
     });
   }
