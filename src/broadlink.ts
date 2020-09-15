@@ -51,29 +51,18 @@ export function Discover(timeout: number = 0, localIP?: string) {
 
   socket.on("listening", function () {
     socket.setBroadcast(true);
-    const packet = Buffer.alloc(48, 0);
     const now = new Date();
-    const timezone = now.getTimezoneOffset() / -60;
-    const year = now.getFullYear();
+    const packet = Buffer.alloc(48, 0);
     const port = socket.address().port;
+    packet.writeUInt32LE((now.getTimezoneOffset() / -60) & 0xffff, 0x8);
+    packet.writeUInt16LE(now.getFullYear(), 0xc);
+    packet.writeUInt8(now.getMinutes(), 0x0e);
+    packet.writeUInt8(now.getHours(), 0x0f);
+    packet.writeUInt8(now.getFullYear() % 100, 0x10);
+    packet.writeUInt8(now.getDay(), 0x11);
+    packet.writeUInt8(now.getDate(), 0x12);
+    packet.writeUInt8(now.getMonth() + 1, 0x13);
 
-    if (timezone < 0) {
-      packet[0x08] = 0xff + timezone - 1;
-      packet[0x09] = 0xff;
-      packet[0x0a] = 0xff;
-      packet[0x0b] = 0xff;
-    } else {
-      packet[0x08] = timezone;
-    }
-
-    packet[0x0c] = year & 0xff;
-    packet[0x0d] = year >> 8;
-    packet[0x0e] = now.getMinutes();
-    packet[0x0f] = now.getHours();
-    packet[0x10] = year % 100;
-    packet[0x11] = now.getDay();
-    packet[0x12] = now.getDate();
-    packet[0x13] = now.getMonth() + 1;
     if (!localIP) {
       const ni = networkInterfaces();
       const ips: Array<string> = Object.keys(ni).reduce((ips: Array<string>, name) => {
@@ -82,14 +71,13 @@ export function Discover(timeout: number = 0, localIP?: string) {
       }, []);
       localIP = ips[0];
     }
-    const parsedIP: Array<number> = localIP.split(".").map((part) => parseInt(part, 10));
-    [packet[0x18], packet[0x19], packet[0x1a], packet[0x1b]] = parsedIP;
-    packet[0x1c] = port & 0xff;
-    packet[0x1d] = port >> 8;
-    packet[0x26] = 6;
-    const cs = checksum(packet);
-    packet[0x20] = cs & 0xff;
-    packet[0x21] = cs >> 8;
+
+    localIP.split(".").map((part) => parseInt(part, 10))
+      .forEach((part, idx) => packet.writeUInt8(part, 0x18 + idx));
+
+    packet.writeUInt16LE(port, 0x1c);
+    packet.writeUInt8(6, 0x26);
+    packet.writeUInt16LE(checksum(packet), 0x20);
     socket.send(packet, 0, packet.length, 80, "255.255.255.255", function (err) {
       if (err) {
         sc.addError(err);
