@@ -1,6 +1,6 @@
 import * as dgram from "dgram";
 import * as crypto from "crypto";
-import { StreamController, Stream } from "tricklejs";
+import { StreamController } from "tricklejs";
 import { networkInterfaces } from "os";
 
 export enum SecurityMode {
@@ -8,41 +8,7 @@ export enum SecurityMode {
   WEP,
   WPA1,
   WPA2,
-}
-
-export function GetDeviceType(dType: number) {
-  switch (dType) {
-    case 0:
-      return "SP1";
-    case 0x2711:
-    case 0x2719:
-    case 0x271a:
-    case 0x7919:
-    case 0x791a:
-    case 0x2720:
-    case 0x753e:
-    case 0x2728:
-    case 0x2733:
-    case 0x273e:
-    case 0x2736:
-      return "SP2";
-    case 0x2712:
-    case 0x2737:
-    case 0x273d:
-    case 0x2783:
-    case 0x277c:
-    case 0x272a:
-    case 0x2787:
-    case 0x278b:
-    case 0x278f:
-      return "RM";
-    case 0x2714:
-      return "A1";
-    case 0x4eb5:
-      return "MP1";
-    default:
-      return "UNKNOWN";
-  }
+  WPA1Or2,
 }
 
 export function Setup(ssid: string, password: string, securityMode: SecurityMode): Promise<void> {
@@ -137,17 +103,18 @@ export function Discover(timeout: number = 0, localIP?: string) {
     sc.add(device);
   });
   Promise.resolve().then(() => socket.bind());
-  if(timeout) setTimeout(sc.close.bind(sc), timeout);
+  if (timeout) setTimeout(sc.close.bind(sc), timeout);
   return sc.stream;
 }
 
 export class Device {
   _count: number;
-  _id: Uint8Array;
-  _iv: Uint8Array;
-  _key: Uint8Array;
-  constructor(public deviceType: number, public mac: Uint8Array, public host: string, public port: number) {
-    this._count = Math.random() & 0xffff;
+  _id: Buffer;
+  _iv: Buffer;
+  _key: Buffer;
+  _authed = false;
+  constructor(private _deviceType: number, private _mac: Buffer, private _host: string, private _port: number) {
+    this._count = crypto.randomBytes(2).readUInt16BE();
     this._id = Buffer.alloc(4, 0);
     this._key = Buffer.from([
       0x09,
@@ -187,91 +154,124 @@ export class Device {
     ]);
   }
 
-  getPacket(command: number, payload: Uint8Array) : Uint8Array{
+  getPacket(command: number, payload: Buffer): Buffer {
     const header = Buffer.alloc(56, 0);
     this._count = (this._count + 1) & 0xffff;
-    header[0x0] = 0x5a;
-    header[0x1] = 0xa5;
-    header[0x2] = 0xaa;
-    header[0x3] = 0x55;
-    header[0x4] = 0x5a;
-    header[0x5] = 0xa5;
-    header[0x6] = 0xaa;
-    header[0x7] = 0x55;
-    header[0x24] = this.deviceType & 0xff;
-    header[0x25] = this.deviceType >> 8;
-    header[0x26] = command & 0xff;
-    header[0x27] = command >> 8;
-    header[0x28] = this._count && 0xff;
+    header[0x00] = 0x5a;
+    header[0x01] = 0xa5;
+    header[0x02] = 0xaa;
+    header[0x03] = 0x55;
+    header[0x04] = 0x5a;
+    header[0x05] = 0xa5;
+    header[0x06] = 0xaa;
+    header[0x07] = 0x55;
+    header[0x24] = this._deviceType & 0xff;
+    header[0x25] = this._deviceType >> 8;
+    header[0x26] = command;
+    header[0x28] = this._count & 0xff;
     header[0x29] = this._count >> 8;
-    header[0x2a] = this.mac[0];
-    header[0x2b] = this.mac[1];
-    header[0x2c] = this.mac[2];
-    header[0x2d] = this.mac[3];
-    header[0x2e] = this.mac[4];
-    header[0x2f] = this.mac[5];
+    header[0x2a] = this._mac[0];
+    header[0x2b] = this._mac[1];
+    header[0x2c] = this._mac[2];
+    header[0x2d] = this._mac[3];
+    header[0x2e] = this._mac[4];
+    header[0x2f] = this._mac[5];
     header[0x30] = this._id[0];
     header[0x31] = this._id[1];
     header[0x32] = this._id[2];
     header[0x33] = this._id[3];
 
-    const payloadCS = checksum(payload);
-    header[0x34] = payloadCS && 0xff;
-    header[0x35] = payloadCS >> 8;
+    let cs = checksum(payload);
+    header[0x34] = cs & 0xff;
+    header[0x35] = cs >> 8;
+
     const cipher = crypto.createCipheriv("aes-128-cbc", this._key, this._iv);
-    let encryptedPayload = cipher.update(payload);
-    encryptedPayload = Buffer.concat([encryptedPayload, cipher.final()]);
+    cipher.setAutoPadding(false);
+    const encryptedPayload = Buffer.concat([cipher.update(payload), cipher.final()]);
     const packet = Buffer.concat([header, encryptedPayload]);
-    const cs = checksum(packet);
+    cs = checksum(packet);
     packet[0x20] = cs & 0xff;
     packet[0x21] = cs >> 8;
     return packet;
   }
 
-  auth(): Promise<void> {
+  sendPacket(packet: Buffer): Promise<Buffer> {
     return new Promise((resolve, reject) => {
-      const payload = Buffer.alloc(80, 0);
-      const mac = this.macAddress;
-      Buffer.from(`===${mac.split(":").join("")}`, "utf8").copy(payload, 4, 0, 15);
-      payload[0x13] = 0x01;
-      payload[0x2d] = 0x01;
-      Buffer.from(mac).copy(payload, 0x30, 0);
-
-      const packet = this.getPacket(0x0065, payload);
       const socket = dgram.createSocket({ type: "udp4", reuseAddr: true });
-      socket.on("message", (data: Uint8Array) => {
-        this._id = data.slice(0, 4);
-        this._key = data.slice(4, 0x14);
+      socket.on("message", (data: Buffer) => {
         socket.close();
-        resolve();
+        resolve(data);
       });
 
-      socket.on('listening', () => {
-        socket.send(packet, this.port, this.host, function(err) {
+      socket.on("listening", () => {
+        socket.send(packet, this._port, this._host, function (err) {
           if (err) {
             socket.close();
             reject(err);
           }
         });
       });
-
       socket.bind();
+    });
+  }
+
+  auth(): Promise<void> {
+    if (this._authed) return Promise.resolve();
+    return new Promise(async (resolve, reject) => {
+      const payload = Buffer.alloc(80, 0);
+      payload[0x1e] = 0x1;
+      payload[0x2d] = 0x1;
+
+      const mac = this.macAddress;
+      Buffer.from(`===${mac.split(":").join("")}`, "utf8").copy(payload, 4, 0);
+      Buffer.from(mac).copy(payload, 0x30, 0);
+      const packet = this.getPacket(0x65, payload);
+      const data = await this.sendPacket(packet);
+      if (data.length < 48) {
+        return reject(new Error('invalid length'));
+      }
+
+      const cs = data[0x20] | (data[0x21] << 8);
+      const dataCS = checksum(data);
+      if (((dataCS - data[0x20] - data[0x21]) & 0xffff) !== cs) {
+        return reject(new Error('checksum error'));
+      }
+
+      const ecode = data[0x22] | (data[0x23] << 8);
+      if (ecode) {
+        return reject(new Error(`error: code= ${ecode}`));
+      }
+
+      const decipher = crypto.createDecipheriv("aes-128-cbc", this._key, this._iv);
+      decipher.setAutoPadding(false);
+      const deciphered = Buffer.concat([decipher.update(data.slice(0x38)), decipher.final()]);
+      this._id = deciphered.slice(0, 4);
+      this._key = deciphered.slice(4, 0x14);
+      this._authed = true;
+      resolve();
+    });
+  }
+
+  enterLearning(): Promise<Buffer> {
+    return new Promise(async (resolve) => {
+      await this.auth();
+      const payload = Buffer.alloc(16, 0);
+      payload[0] = 3;
+      const packet = this.getPacket(0x6a, payload);
+      const data = await this.sendPacket(packet);
+      console.log(data);
+      resolve();
     });
   }
 
   get macAddress(): string {
     const pad = (s: string) => (s.length < 2 ? `0${s}` : s);
-    return [this.mac[5], this.mac[4], this.mac[3], this.mac[2], this.mac[1], this.mac[0]]
+    return [this._mac[5], this._mac[4], this._mac[3], this._mac[2], this._mac[1], this._mac[0]]
       .map((b) => pad(b.toString(16)))
       .join(":");
   }
 }
 
-function checksum(b: Uint8Array): number {
-  let cs = 0xbeaf;
-  for (let i = 0; i < b.length; i++) {
-    cs += b[i];
-    cs = cs & 0xffff;
-  }
-  return cs;
+function checksum(b: Buffer): number {
+  return b.reduce((cs, byte) => (cs + byte) & 0xffff, 0xbeaf);
 }
