@@ -17,19 +17,20 @@ export function Setup(ssid: string, password: string, securityMode: SecurityMode
     socket.on("listening", function () {
       socket.setBroadcast(true);
       const packet = Buffer.alloc(136, 0);
-      packet[0x26] = 0x14;
+      packet.writeUInt8(0x14, 0x26);
       for (let i = 0; i < ssid.length; i++) {
-        packet[0x44 + i] = ssid[i].charCodeAt(0);
+        packet.writeUInt8(ssid[i].charCodeAt(0), 0x44+i);
       }
+
       for (let i = 0; i < password.length; i++) {
-        packet[0x64 + i] = password[i].charCodeAt(0);
+        packet.writeUInt8(password[i].charCodeAt(0), 0x64+i);
       }
-      packet[0x84] = ssid.length;
-      packet[0x85] = password.length;
-      packet[0x85] = securityMode;
-      let cs = checksum(packet);
-      packet[0x20] = cs & 0xff;
-      packet[0x21] = cs >> 8;
+
+      packet.writeUInt8(ssid.length, 0x84);
+      packet.writeUInt8(password.length, 0x85);
+      packet.writeUInt8(securityMode, 0x86);
+      packet.writeUInt16LE(checksum(packet), 0x20);
+
       socket.send(packet, 80, "255.255.255.255", function (err) {
         if (err) {
           socket.close();
@@ -228,13 +229,13 @@ export class Device {
       const packet = this.getPacket(0x65, payload);
       const data = await this.sendPacket(packet);
       if (data.length < 48) {
-        return reject(new Error('invalid length'));
+        return reject(new Error("invalid length"));
       }
 
       const cs = data[0x20] | (data[0x21] << 8);
       const dataCS = checksum(data);
       if (((dataCS - data[0x20] - data[0x21]) & 0xffff) !== cs) {
-        return reject(new Error('checksum error'));
+        return reject(new Error("checksum error"));
       }
 
       const ecode = data[0x22] | (data[0x23] << 8);
