@@ -4,18 +4,23 @@ import { Setup, SecurityMode, Discover, Device } from "./broadlink";
 import prompts from "prompts";
 import * as clipboardy from "clipboardy";
 
+const exitOnCancel = () => process.exit(0);
+
 (async function () {
-  const action = await prompts([
-    {
-      type: "select",
-      name: "value",
-      message: "What would you like to do?",
-      choices: [
-        { title: "Discover", value: "discover" },
-        { title: "Setup", value: "setup" },
-      ],
-    },
-  ]);
+  const action = await prompts(
+    [
+      {
+        type: "select",
+        name: "value",
+        message: "What would you like to do?",
+        choices: [
+          { title: "Discover", value: "discover" },
+          { title: "Setup", value: "setup" },
+        ],
+      },
+    ],
+    { onCancel: exitOnCancel }
+  );
   switch (action.value) {
     case "discover":
       await discover();
@@ -27,41 +32,44 @@ import * as clipboardy from "clipboardy";
 })();
 
 async function setup() {
-  const response = await prompts([
-    {
-      type: "text",
-      name: "ssid",
-      message: "SSID?",
-    },
-    {
-      type: "password",
-      name: "password",
-      message: "Password?",
-    },
-    {
-      type: "select",
-      name: "wireless",
-      message: "Wireless?",
-      choices: [
-        {
-          title: "None",
-          value: SecurityMode.None,
-        },
-        {
-          title: "WPA1",
-          value: SecurityMode.WPA1,
-        },
-        {
-          title: "WPA2",
-          value: SecurityMode.WPA2,
-        },
-        {
-          title: "WPA1/2",
-          value: SecurityMode.WPA1or2,
-        },
-      ],
-    },
-  ]);
+  const response = await prompts(
+    [
+      {
+        type: "text",
+        name: "ssid",
+        message: "SSID?",
+      },
+      {
+        type: "password",
+        name: "password",
+        message: "Password?",
+      },
+      {
+        type: "select",
+        name: "wireless",
+        message: "Wireless?",
+        choices: [
+          {
+            title: "None",
+            value: SecurityMode.None,
+          },
+          {
+            title: "WPA1",
+            value: SecurityMode.WPA1,
+          },
+          {
+            title: "WPA2",
+            value: SecurityMode.WPA2,
+          },
+          {
+            title: "WPA1/2",
+            value: SecurityMode.WPA1or2,
+          },
+        ],
+      },
+    ],
+    { onCancel: exitOnCancel }
+  );
   try {
     await Setup(response.ssid, response.password, response.wireless);
   } catch (e) {
@@ -71,14 +79,17 @@ async function setup() {
 
 async function discover() {
   const sleep = (s: number) => new Promise((resolve) => setTimeout(resolve, s * 1000));
-  const response = await prompts([
-    {
-      type: "number",
-      name: "secs",
-      message: "Timeout (secs)",
-      initial: 2,
-    },
-  ]);
+  const response = await prompts(
+    [
+      {
+        type: "number",
+        name: "secs",
+        message: "Timeout (secs)",
+        initial: 2,
+      },
+    ],
+    { onCancel: exitOnCancel }
+  );
   console.log("\nSearching...\n");
   try {
     let devices: Array<Device> = [];
@@ -89,19 +100,22 @@ async function discover() {
       throw "no devices found";
     }
 
-    const selectedDevice = await prompts([
-      {
-        type: "select",
-        name: "value",
-        message: "Which Device?",
-        choices: devices.map((d) => {
-          return {
-            value: d,
-            title: `${d.hostport} / ${d.macAddress}`,
-          };
-        }),
-      },
-    ]);
+    const selectedDevice = await prompts(
+      [
+        {
+          type: "select",
+          name: "value",
+          message: "Which Device?",
+          choices: devices.map((d) => {
+            return {
+              value: d,
+              title: `${d.hostport} / ${d.macAddress}`,
+            };
+          }),
+        },
+      ],
+      { onCancel: exitOnCancel }
+    );
 
     const d = selectedDevice.value as Device;
 
@@ -128,7 +142,7 @@ async function discover() {
             ],
           },
         ],
-        { onCancel: () => process.exit(0) }
+        { onCancel: exitOnCancel }
       );
 
       try {
