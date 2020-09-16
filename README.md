@@ -18,7 +18,7 @@ Broadlink JS
 Example:
 
 ```javascript
-import { Setup, SecurityMode, Discover } from "broadlink-js";
+import { Setup, SecurityMode, Discover } from "js-broadlink";
 const sleep = (s: number) => new Promise((resolve) => setTimeout(resolve, s * 1000));
 
 // discover
@@ -40,7 +40,7 @@ or callback style
 
 
 ```javascript
-import { Discover } from "broadlink-js";
+import { Discover } from "js-broadlink";
 
 // discover
 function discover(callback) {

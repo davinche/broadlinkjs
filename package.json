@@ -1,5 +1,5 @@
 {
-  "name": "broadlink-js",
+  "name": "js-broadlink",
   "version": "0.0.1",
   "description": "",
   "main": "./dist/broadlink.js",
@@ -25,5 +25,13 @@
     "clipboardy": "^2.3.0",
     "prompts": "^2.3.2",
     "tricklejs": "^1.0.6"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/davinche/broadlinkjs.git"
+  },
+  "bugs": {
+    "url": "https://github.com/davinche/broadlinkjs/issues"
+  },
+  "homepage": "https://github.com/davinche/broadlinkjs#readme"
 }
