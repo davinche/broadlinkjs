@@ -10,8 +10,8 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "paths": {
-      "*": ["node_modules/*", "src/types/*"]
-    }
+    "outDir": "dist/",
+    "declarationMap": true,
+    "declaration": true
   }
 }
