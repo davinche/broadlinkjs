@@ -7,7 +7,7 @@ Broadlink JS
 
 ## Installation
 
-`npm install broadlink-js`
+`npm install js-broadlink`
 
 
 ## Usage
