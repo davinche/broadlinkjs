@@ -114,11 +114,11 @@ async function discover() {
             message: "What to do?",
             choices: [
               {
-                title: "Learning Code",
+                title: "Enter Learning Mode",
                 value: "learn",
               },
               {
-                title: "Read Learned",
+                title: "Read Learned Code",
                 value: "read",
               },
               {
@@ -141,7 +141,7 @@ async function discover() {
             const b64 = data.toString("base64");
             // copy(b64);
             clipboardy.write(b64);
-            console.log("data:", b64);
+            console.log("data:", b64, "copied to clipboard");
             break;
           case "send":
             const resp = await prompts([
