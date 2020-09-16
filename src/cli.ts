@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import { Setup, SecurityMode, Discover, Device } from "./broadlink";
 import prompts from "prompts";
 import * as clipboardy from "clipboardy";
