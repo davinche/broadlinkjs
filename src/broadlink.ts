@@ -13,7 +13,10 @@ export enum SecurityMode {
 
 export function Setup(ssid: string, password: string, securityMode: SecurityMode): Promise<void> {
   return new Promise(function (resolve, reject) {
-    const socket = dgram.createSocket({ type: "udp4", reuseAddr: true });
+    const socket = dgram.createSocket({
+      type: "udp4",
+      reuseAddr: true,
+    });
     socket.on("listening", function () {
       socket.setBroadcast(true);
       const packet = Buffer.alloc(136, 0);
@@ -205,7 +208,10 @@ export class Device {
 
   private _sendPacket(packet: Buffer): Promise<Buffer> {
     return new Promise((resolve, reject) => {
-      const socket = dgram.createSocket({ type: "udp4", reuseAddr: true });
+      const socket = dgram.createSocket({
+        type: "udp4",
+        reuseAddr: true,
+      });
       socket.on("message", (data: Buffer) => {
         socket.close();
         resolve(data);
@@ -313,6 +319,10 @@ export class Device {
     return [this._mac[5], this._mac[4], this._mac[3], this._mac[2], this._mac[1], this._mac[0]]
       .map((b) => pad(b.toString(16)))
       .join(":");
+  }
+
+  get hostport(): string {
+    return `${this._host}:${this._port}`;
   }
 }
 
