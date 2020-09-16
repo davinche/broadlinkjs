@@ -8,7 +8,7 @@ export enum SecurityMode {
   WEP,
   WPA1,
   WPA2,
-  WPA1Or2,
+  WPA1or2,
 }
 
 export function Setup(ssid: string, password: string, securityMode: SecurityMode): Promise<void> {
@@ -19,11 +19,11 @@ export function Setup(ssid: string, password: string, securityMode: SecurityMode
       const packet = Buffer.alloc(136, 0);
       packet.writeUInt8(0x14, 0x26);
       for (let i = 0; i < ssid.length; i++) {
-        packet.writeUInt8(ssid[i].charCodeAt(0), 0x44+i);
+        packet.writeUInt8(ssid[i].charCodeAt(0), 0x44 + i);
       }
 
       for (let i = 0; i < password.length; i++) {
-        packet.writeUInt8(password[i].charCodeAt(0), 0x64+i);
+        packet.writeUInt8(password[i].charCodeAt(0), 0x64 + i);
       }
 
       packet.writeUInt8(ssid.length, 0x84);
@@ -72,7 +72,9 @@ export function Discover(timeout: number = 0, localIP?: string) {
       localIP = ips[0];
     }
 
-    localIP.split(".").map((part) => parseInt(part, 10))
+    localIP
+      .split(".")
+      .map((part) => parseInt(part, 10))
       .forEach((part, idx) => packet.writeUInt8(part, 0x18 + idx));
 
     packet.writeUInt16LE(port, 0x1c);
@@ -102,7 +104,8 @@ export class Device {
   _iv: Buffer;
   _key: Buffer;
   _authed = false;
-  constructor(private _deviceType: number, private _mac: Buffer, private _host: string, private _port: number) {
+  _mac: Buffer;
+  constructor(private _deviceType: number, _mac: Buffer | string, private _host: string, private _port: number) {
     this._count = crypto.randomBytes(2).readUInt16BE();
     this._id = Buffer.alloc(4, 0);
     this._key = Buffer.from([
@@ -141,6 +144,16 @@ export class Device {
       0x6f,
       0x58,
     ]);
+    if (typeof _mac === "string") {
+      this._mac = Buffer.from(
+        _mac
+          .split(":")
+          .map((part) => parseInt(part, 16))
+          .reverse()
+      );
+    } else {
+      this._mac = _mac;
+    }
   }
 
   private _auth(): Promise<void> {
@@ -166,13 +179,15 @@ export class Device {
         this._key = deciphered.slice(4, 0x14);
         this._authed = true;
         resolve();
-      } catch (e) { reject(e); }
+      } catch (e) {
+        reject(e);
+      }
     });
   }
 
   private _getPacket(command: number, payload: Buffer): Buffer {
     const header = Buffer.alloc(56, 0);
-    const staticHeader = Buffer.from([ 0x5a, 0xa5, 0xaa, 0x55, 0x5a, 0xa5, 0xaa, 0x55, ]);
+    const staticHeader = Buffer.from([0x5a, 0xa5, 0xaa, 0x55, 0x5a, 0xa5, 0xaa, 0x55]);
     this._count = (this._count + 1) & 0xffff;
     staticHeader.copy(header, 0, 0);
     header.writeUInt16LE(this._deviceType, 0x24);
@@ -182,13 +197,8 @@ export class Device {
     this._id.copy(header, 0x30, 0);
     header.writeUInt16LE(checksum(payload), 0x34);
 
-    // encode
-    const cipher = crypto.createCipheriv("aes-128-cbc", this._key, this._iv);
-    cipher.setAutoPadding(false);
-    const encryptedPayload = Buffer.concat([cipher.update(payload), cipher.final()]);
-    const packet = Buffer.concat([header, encryptedPayload]);
-
     // checksum
+    const packet = Buffer.concat([header, this.encrypt(payload)]);
     packet.writeUInt16LE(checksum(packet), 0x20);
     return packet;
   }
@@ -213,7 +223,7 @@ export class Device {
     });
   }
 
-  _checkError(data: Buffer) {
+  private _checkError(data: Buffer) {
     if (data.length < 48) {
       throw new Error("invalid length");
     }
@@ -230,8 +240,20 @@ export class Device {
     }
   }
 
+  encrypt(data: Buffer): Buffer {
+    const encryptor = crypto.createCipheriv("aes-128-cbc", this._key, this._iv);
+    encryptor.setAutoPadding(false);
+    data = Buffer.concat([data, Buffer.alloc(16 - (data.length % 16), 0)]);
+    return Buffer.concat([encryptor.update(data), encryptor.final()]);
+  }
 
-  enterLearning(): Promise<Buffer> {
+  decrypt(encrypted: Buffer): Buffer {
+    const decryptor = crypto.createDecipheriv("aes-128-cbc", this._key, this._iv);
+    decryptor.setAutoPadding(false);
+    return Buffer.concat([decryptor.update(encrypted), decryptor.final()]);
+  }
+
+  enterLearning(): Promise<void> {
     return new Promise(async (resolve) => {
       await this._auth();
       const payload = Buffer.alloc(16, 0);
@@ -239,6 +261,50 @@ export class Device {
       const packet = this._getPacket(0x6a, payload);
       await this._sendPacket(packet);
       resolve();
+    });
+  }
+
+  checkData(): Promise<Buffer> {
+    return new Promise(async (resolve, reject) => {
+      try {
+        await this._auth();
+        const payload = Buffer.alloc(16, 0);
+        payload[0] = 4;
+        const packet = this._getPacket(0x6a, payload);
+        const response = await this._sendPacket(packet);
+        this._checkError(response);
+        const data = this.decrypt(response.slice(0x38)).slice(4);
+        resolve(data);
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
+  sendData(d: Buffer): Promise<void> {
+    return new Promise(async (resolve) => {
+      await this._auth();
+      const header = Buffer.from([2, 0, 0, 0]);
+      const payload = Buffer.concat([header, d]);
+      const packet = this._getPacket(0x6a, payload);
+      await this._sendPacket(packet);
+      resolve();
+    });
+  }
+
+  checkTemperature(): Promise<number> {
+    return new Promise(async (resolve, reject) => {
+      try {
+        await this._auth();
+        const payload = Buffer.from([1]);
+        const packet = this._getPacket(0x6a, payload);
+        const response = await this._sendPacket(packet);
+        this._checkError(response);
+        const data = this.decrypt(response.slice(0x38)).slice(4);
+        resolve(data[0] + data[1] / 10.0);
+      } catch (e) {
+        reject(e);
+      }
     });
   }
 
