@@ -109,7 +109,7 @@ async function discover() {
           choices: devices.map((d) => {
             return {
               value: d,
-              title: `${d.hostport} / ${d.macAddress}`,
+              title: `${d.hostport} / ${d.macAddress} (${d.deviceType})`,
             };
           }),
         },

@@ -325,6 +325,10 @@ export class Device {
     });
   }
 
+  get deviceType(): number {
+    return this._deviceType;
+  }
+
   get macAddress(): string {
     const pad = (s: string) => (s.length < 2 ? `0${s}` : s);
     return [this._mac[5], this._mac[4], this._mac[3], this._mac[2], this._mac[1], this._mac[0]]
