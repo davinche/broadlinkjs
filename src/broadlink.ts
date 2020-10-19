@@ -270,6 +270,17 @@ export class Device {
     });
   }
 
+  exitLearning(): Promise<void> {
+    return new Promise(async (resolve) => {
+      await this._auth();
+      const payload = Buffer.alloc(16, 0);
+      payload[0] = 30;
+      const packet = this._getPacket(0x6a, payload);
+      await this._sendPacket(packet);
+      resolve();
+    });
+  }
+
   checkData(): Promise<Buffer> {
     return new Promise(async (resolve, reject) => {
       try {

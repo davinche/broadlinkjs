@@ -132,6 +132,10 @@ async function discover() {
                 value: "learn",
               },
               {
+                title: "Exit Learning Mode",
+                value: "exitLearn",
+              },
+              {
                 title: "Read Learned Code",
                 value: "read",
               },
@@ -149,6 +153,9 @@ async function discover() {
         switch (action.value) {
           case "learn":
             await d.enterLearning();
+            break;
+          case "exitLearn":
+            await d.exitLearning();
             break;
           case "read":
             const data = await d.checkData();
